@@ -56,3 +56,4 @@ venv.bak/
 # Logs & Temporary Files
 *.log
 scratch/
+.env
