@@ -1,0 +1,307 @@
+{
+  "info": {
+    "name": "LLM Shield API",
+    "description": "Production-ready API that wraps LLM calls in a reliable control loop: Validate → Retry → Repair → Fallback → Human Escalation.\n\nImport OpenAPI spec from: http://localhost:8000/openapi.json",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8000"
+    }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Health Check",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/health",
+            "header": []
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Server is healthy', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    var data = pm.response.json();",
+                  "    pm.expect(data.status).to.eql('healthy');",
+                  "    pm.expect(data.config).to.have.property('default_model');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Execute — Happy Path",
+      "item": [
+        {
+          "name": "Simple Prompt (No Validation)",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/execute",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"prompt\": \"What is the capital of France? Answer in one word.\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Execution succeeded', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    var data = pm.response.json();",
+                  "    pm.expect(data.status).to.eql('SUCCEEDED');",
+                  "    pm.expect(data.result).to.not.be.null;",
+                  "    pm.expect(data.execution_trace).to.have.property('total_llm_calls');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Structured JSON with Schema Validation",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/execute",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"prompt\": \"Generate a JSON user profile with name, age, and email for a fictional person.\",\n  \"response_schema\": {\n    \"type\": \"object\",\n    \"required\": [\"name\", \"age\", \"email\"],\n    \"properties\": {\n      \"name\": { \"type\": \"string\" },\n      \"age\": { \"type\": \"integer\", \"minimum\": 0 },\n      \"email\": { \"type\": \"string\" }\n    },\n    \"additionalProperties\": false\n  }\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Structured response is valid', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    var data = pm.response.json();",
+                  "    pm.expect(data.status).to.eql('SUCCEEDED');",
+                  "    pm.expect(data.result).to.have.property('name');",
+                  "    pm.expect(data.result).to.have.property('age');",
+                  "    pm.expect(data.result).to.have.property('email');",
+                  "    pm.expect(data.result.age).to.be.a('number');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Execute — With Config Overrides",
+      "item": [
+        {
+          "name": "Custom Retry & Fallback Config",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/execute",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"prompt\": \"Generate a JSON product with name, price, and category.\",\n  \"model\": \"groq/llama-3.1-70b-versatile\",\n  \"response_schema\": {\n    \"type\": \"object\",\n    \"required\": [\"name\", \"price\", \"category\"],\n    \"properties\": {\n      \"name\": { \"type\": \"string\" },\n      \"price\": { \"type\": \"number\", \"minimum\": 0 },\n      \"category\": { \"type\": \"string\" }\n    }\n  },\n  \"config\": {\n    \"max_retries\": 5,\n    \"max_repairs\": 3,\n    \"timeout_seconds\": 15,\n    \"fallback_models\": [\"groq/llama-3.1-8b-instant\", \"groq/gemma2-9b-it\"],\n    \"template_response\": {\n      \"name\": \"Unknown Product\",\n      \"price\": 0,\n      \"category\": \"uncategorized\"\n    }\n  }\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Config overrides applied', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    var data = pm.response.json();",
+                  "    pm.expect(data.status).to.be.oneOf(['SUCCEEDED', 'FAILED']);",
+                  "    pm.expect(data.execution_trace).to.have.property('transitions');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "With Template Fallback",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/execute",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"prompt\": \"Generate a JSON greeting with message and language.\",\n  \"response_schema\": {\n    \"type\": \"object\",\n    \"required\": [\"message\", \"language\"],\n    \"properties\": {\n      \"message\": { \"type\": \"string\" },\n      \"language\": { \"type\": \"string\" }\n    }\n  },\n  \"config\": {\n    \"max_retries\": 1,\n    \"max_repairs\": 1,\n    \"template_response\": {\n      \"message\": \"Hello, World!\",\n      \"language\": \"en\"\n    }\n  }\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Response is valid', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    var data = pm.response.json();",
+                  "    pm.expect(data.status).to.eql('SUCCEEDED');",
+                  "    pm.expect(data.result).to.have.property('message');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Escalation Management",
+      "item": [
+        {
+          "name": "List All Escalations",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/escalations",
+            "header": []
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Returns array of escalations', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    var data = pm.response.json();",
+                  "    pm.expect(data).to.be.an('array');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List Pending Escalations",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/escalations?status=pending",
+            "header": []
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Returns pending escalations', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    var data = pm.response.json();",
+                  "    pm.expect(data).to.be.an('array');",
+                  "    data.forEach(function(esc) {",
+                  "        pm.expect(esc.status).to.eql('pending');",
+                  "    });",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Escalation Statistics",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/escalations/stats",
+            "header": []
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Returns stats', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    var data = pm.response.json();",
+                  "    pm.expect(data).to.have.property('total');",
+                  "    pm.expect(data).to.have.property('pending');",
+                  "    pm.expect(data).to.have.property('resolved');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Escalation by ID",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/escalations/{{escalation_id}}",
+            "header": []
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Returns escalation details', function () {",
+                  "    if (pm.response.code === 200) {",
+                  "        var data = pm.response.json();",
+                  "        pm.expect(data).to.have.property('id');",
+                  "        pm.expect(data).to.have.property('original_prompt');",
+                  "        pm.expect(data).to.have.property('reason');",
+                  "        pm.expect(data).to.have.property('validation_errors');",
+                  "        pm.expect(data).to.have.property('model_responses');",
+                  "        pm.expect(data).to.have.property('recovery_attempts');",
+                  "    }",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Resolve Escalation",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/escalations/{{escalation_id}}/resolve",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"notes\": \"Investigated and resolved manually. The model consistently failed to produce valid email addresses.\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Escalation resolved', function () {",
+                  "    if (pm.response.code === 200) {",
+                  "        var data = pm.response.json();",
+                  "        pm.expect(data.status).to.eql('resolved');",
+                  "        pm.expect(data.resolution_notes).to.not.be.null;",
+                  "    }",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
