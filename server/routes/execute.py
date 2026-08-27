@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Execution"])
 
 
-def _build_chaos_shield(request: ShieldRequest) -> Shield:
+def _build_chaos_shield(request: ShieldRequest, chaos_mode: str) -> Shield:
     """
     Build a fresh Shield with ChaosProvider for this single request.
 
@@ -41,17 +41,50 @@ def _build_chaos_shield(request: ShieldRequest) -> Shield:
     from llm_shield.config import ShieldConfig
     from llm_shield.providers import LiteLLMProvider
 
+    is_healable = chaos_mode.startswith("healable_")
+    if is_healable:
+        chaos_mode = chaos_mode.replace("healable_", "")
+
+    rates = {
+        "timeout": 0.0,
+        "server_error": 0.0,
+        "rate_limit": 0.0,
+        "malformed_json": 0.0,
+        "empty_response": 0.0,
+        "truncated_json": 0.0,
+    }
+
+    if chaos_mode in rates:
+        rates[chaos_mode] = 1.0
+    else:
+        # "true" / random mixed mode — inject a mix of faults on every call
+        # but heal after 3 calls so Shield can eventually win
+        rates["timeout"] = 0.20
+        rates["server_error"] = 0.20
+        rates["rate_limit"] = 0.15
+        rates["malformed_json"] = 0.20
+        rates["empty_response"] = 0.10
+        rates["truncated_json"] = 0.05
+        is_healable = True  # Always healable in mixed mode — Shield will win eventually
+
     chaos_config = ChaosConfig(
-        timeout_rate=0.15,
-        server_error_rate=0.15,
-        rate_limit_rate=0.10,
-        malformed_json_rate=0.15,
-        empty_response_rate=0.05,
-        truncated_json_rate=0.05,
+        timeout_rate=rates["timeout"],
+        server_error_rate=rates["server_error"],
+        rate_limit_rate=rates["rate_limit"],
+        malformed_json_rate=rates["malformed_json"],
+        empty_response_rate=rates["empty_response"],
+        truncated_json_rate=rates["truncated_json"],
+        healable=is_healable,
+        heal_after_calls=3,
     )
     chaos_provider = ChaosProvider(base=LiteLLMProvider(), config=chaos_config)
 
     cfg = ShieldConfig()
+    # Chaos mode needs a bigger retry/repair budget to survive multiple injected faults
+    cfg = cfg.merge_request_overrides(
+        max_retries=5,
+        max_repairs=3,
+    )
     if request.config:
         cfg = cfg.merge_request_overrides(
             max_retries=request.config.max_retries,
@@ -62,8 +95,8 @@ def _build_chaos_shield(request: ShieldRequest) -> Shield:
 
     logger.warning(
         "[CHAOS] Building chaos Shield for this request — "
-        "fault_rate=%.0f%% | NOT FOR PRODUCTION",
-        chaos_config.total_fault_rate * 100,
+        "mode=%s | NOT FOR PRODUCTION",
+        chaos_mode,
     )
     return Shield(config=cfg, provider=chaos_provider)
 
@@ -78,7 +111,7 @@ def _build_chaos_shield(request: ShieldRequest) -> Shield:
         "Always returns a response with either a valid result or an escalation packet. "
         "Never raises — all errors are captured in the execution trace.\n\n"
         "**Chaos Testing Mode** (opt-in, double-locked):\n"
-        "Add header `X-Chaos-Mode: true` **and** set `SHIELD_ALLOW_CHAOS=true` in "
+        "Add header `X-Chaos-Mode: <fault_type>` **and** set `SHIELD_ALLOW_CHAOS=true` in "
         "your `.env` to activate fault injection for this request only. "
         "Both conditions must be present — one alone does nothing."
     ),
@@ -95,19 +128,20 @@ async def execute(
         ChaosProvider is never instantiated. Zero overhead.
 
     Chaos mode (explicit opt-in):
-        Requires BOTH X-Chaos-Mode: true header AND SHIELD_ALLOW_CHAOS=true env var.
+        Requires BOTH X-Chaos-Mode header AND SHIELD_ALLOW_CHAOS=true env var.
         A fresh Shield with ChaosProvider is created for this request only.
         The production singleton Shield is untouched.
     """
     # ── Double-lock chaos gate ──────────────────────────────────────────────
     # Lock 1: caller must explicitly set the header
-    header_present = x_chaos_mode is not None and x_chaos_mode.lower() == "true"
+    chaos_val = x_chaos_mode.lower() if x_chaos_mode else "false"
+    header_present = chaos_val != "false"
     # Lock 2: operator must explicitly allow chaos in the server environment
     env_allowed = os.getenv("SHIELD_ALLOW_CHAOS", "false").lower() == "true"
 
     if header_present and env_allowed:
         # Both locks open — use a fresh chaos Shield for this request only
-        chaos_shield = _build_chaos_shield(request)
+        chaos_shield = _build_chaos_shield(request, chaos_val)
         return await chaos_shield.execute(request)
 
     if header_present and not env_allowed:

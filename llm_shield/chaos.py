@@ -82,6 +82,12 @@ class ChaosConfig:
     # --- Reproducibility ---
     seed: int | None = None
     """Set a seed to make the fault sequence deterministic and replayable."""
+    
+    healable: bool = False
+    """If true, faults are only injected on the first `heal_after_calls` calls. Subsequent calls pass-through."""
+
+    heal_after_calls: int = 3
+    """How many calls to inject faults before healing. Only relevant when `healable=True`."""
 
     def __post_init__(self) -> None:
         total = (
@@ -111,7 +117,7 @@ class ChaosConfig:
 #: Realistic malformed payloads that replicate common real-world LLM failures.
 _MALFORMED_PAYLOADS = [
     "{invalid json",
-    '{"name": "Alice" age: 25}',                 # missing comma
+    '{"passenger_name": "Alex Mercer" "flight_class": "FIRST"}',  # missing comma
     "```json\n{\"broken\": true",                 # markdown fence, not closed
     "Sure! Here is your JSON: {\"id\": 1}",       # prose prefix
     "I cannot provide that in JSON format.",       # model refusal
@@ -196,6 +202,9 @@ class ChaosProvider:
 
     def _pick_fault(self) -> str:
         """Pick a fault type based on configured probabilities using the seeded RNG."""
+        if getattr(self._config, 'healable', False) and self._call_count > getattr(self._config, 'heal_after_calls', 3):
+            return "pass_through"
+            
         r = self._rng.random()
         cfg = self._config
 

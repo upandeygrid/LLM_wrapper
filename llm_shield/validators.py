@@ -168,10 +168,15 @@ class CompositeValidator(Validator):
 # ---------------------------------------------------------------------------
 
 def _strip_markdown_fences(text: str) -> str:
-    """Remove markdown code fences (```json ... ```) from LLM responses."""
+    """Remove reasoning tags and markdown code fences from LLM responses."""
     text = text.strip()
-    # Match ```json\n...\n``` or ```\n...\n```
-    match = re.match(r"^```(?:json)?\s*\n(.*)\n```\s*$", text, re.DOTALL)
+    
+    # Remove <think>...</think> blocks common in reasoning models like Qwen or DeepSeek
+    if "<think>" in text and "</think>" in text:
+        text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+        
+    # Match ```json\n...\n``` or ```\n...\n``` anywhere in the remaining text
+    match = re.search(r"```(?:json)?\s*\n(.*)\n```", text, re.DOTALL)
     if match:
         return match.group(1).strip()
     return text

@@ -108,13 +108,50 @@ class Shield:
             self._provider, timeout=config.timeout_seconds
         )
 
-        # Build system prompt for structured output
+        # Build system prompt for structured output.
+        # We intentionally do NOT inject business constraints (maximum, minimum, enum, pattern)
+        # into the LLM prompt — those are enforced by Shield's validator post-hoc.
+        # If the LLM sees any constraint (including in 'description' text), it will
+        # self-correct before Shield can catch the violation.
         system_prompt = request.system_prompt
         if request.response_schema and not system_prompt:
+            import json, copy
+            # Strip constraint keywords AND description fields so the LLM extracts faithfully.
+            # 'description' is stripped because it often contains constraint hints like
+            # "System requirement: maximum allowed age is 20" which cause the LLM to
+            # self-correct values before Shield can validate them.
+            _CONSTRAINT_KEYS = {
+                "maximum", "minimum", "exclusiveMaximum", "exclusiveMinimum",
+                "maxLength", "minLength", "pattern", "enum", "const",
+                "multipleOf", "maxItems", "minItems",
+                "description",  # Strip descriptions — they can leak constraint semantics
+            }
+
+            def _strip_constraints(schema: dict) -> dict:
+                """Recursively remove constraint keywords from a schema copy.
+
+                This ensures the LLM only sees structural information (field names
+                and types) and extracts values faithfully. All constraint enforcement
+                happens post-hoc in Shield's validator using the original full schema.
+                """
+                result = {}
+                for k, v in schema.items():
+                    if k in _CONSTRAINT_KEYS:
+                        continue
+                    if isinstance(v, dict):
+                        result[k] = _strip_constraints(v)
+                    elif isinstance(v, list):
+                        result[k] = [_strip_constraints(i) if isinstance(i, dict) else i for i in v]
+                    else:
+                        result[k] = v
+                return result
+
+            structure_only = _strip_constraints(copy.deepcopy(request.response_schema))
             system_prompt = (
-                "You must respond with valid JSON that conforms to the requested schema. "
-                "Do not include any explanation, markdown formatting, or extra text. "
-                "Output ONLY the JSON object."
+                "You are a faithful data extraction API. "
+                "Extract information EXACTLY as it appears in the user's message — do NOT alter, cap, or coerce any values. "
+                "Return ONLY a valid JSON object. Do not include markdown formatting or extra text.\n\n"
+                f"Required fields and types:\n{json.dumps(structure_only)}"
             )
 
         # Initialize execution context
