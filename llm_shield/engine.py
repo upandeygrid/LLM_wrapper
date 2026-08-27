@@ -228,7 +228,7 @@ class Shield:
         try:
             import time
             start = time.monotonic()
-            response = await ctx.provider.call(
+            response, token_usage = await ctx.provider.call(
                 prompt=ctx.request.prompt,
                 model=ctx.current_model,
                 timeout=ctx.config.timeout_seconds,
@@ -243,6 +243,7 @@ class Shield:
                 phase=ctx.current_phase,
                 response=response[:500],  # Truncate for trace
                 duration_ms=duration,
+                token_usage=token_usage,
             )
             ctx.total_llm_calls += 1
             ctx.transition(

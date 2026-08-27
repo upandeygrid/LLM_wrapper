@@ -84,6 +84,12 @@ async def raw_execute(request: RawRequest):
         
         # Raw response text
         content = response.choices[0].message.content or ""
+        usage = getattr(response, "usage", None)
+        token_usage = {
+            "prompt_tokens": getattr(usage, "prompt_tokens", 0) or 0,
+            "completion_tokens": getattr(usage, "completion_tokens", 0) or 0,
+            "total_tokens": getattr(usage, "total_tokens", 0) or 0,
+        }
         
         # Best-effort markdown stripping (what a typical dev would quickly hack in)
         content = content.strip()
@@ -117,6 +123,7 @@ async def raw_execute(request: RawRequest):
                 "result": None,
                 "error": error_msg,
                 "raw_output": content,
+                "token_usage": token_usage,
                 "payload_sent": [
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": request.prompt}
@@ -128,6 +135,7 @@ async def raw_execute(request: RawRequest):
             "result": parsed_result,
             "error": None,
             "raw_output": content,
+            "token_usage": token_usage,
             "payload_sent": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": request.prompt}

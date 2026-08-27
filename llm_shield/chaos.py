@@ -156,7 +156,7 @@ class ChaosProvider:
         timeout: float = 30.0,
         system_prompt: str | None = None,
         **kwargs: Any,
-    ) -> str:
+    ) -> tuple[str, dict]:
         from llm_shield.exceptions import LLMCallError
 
         self._call_count += 1
@@ -179,15 +179,15 @@ class ChaosProvider:
         elif fault == "malformed_json":
             payload = self._rng.choice(_MALFORMED_PAYLOADS)
             logger.warning("[CHAOS] call #%d → injecting malformed JSON: %r", self._call_count, payload[:40])
-            return payload
+            return payload, {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
         elif fault == "empty_response":
             logger.warning("[CHAOS] call #%d → injecting empty response", self._call_count)
-            return ""
+            return "", {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
         elif fault == "truncated_json":
             logger.warning("[CHAOS] call #%d → injecting truncated JSON", self._call_count)
-            return '{"name": "Ali'
+            return '{"name": "Ali', {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
         else:
             # No fault — delegate to the real provider

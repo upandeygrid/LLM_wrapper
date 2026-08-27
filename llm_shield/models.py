@@ -49,6 +49,9 @@ class LLMCallRecord(BaseModel):
     error: str | None = None
     duration_ms: float | None = None
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
 
 
 class RecoveryAttemptRecord(BaseModel):
@@ -75,6 +78,9 @@ class ExecutionTrace(BaseModel):
     repairs_used: int = 0
     fallbacks_used: int = 0
     final_model: str | None = None
+    total_prompt_tokens: int = 0
+    total_completion_tokens: int = 0
+    total_tokens: int = 0
 
 
 # ---------------------------------------------------------------------------

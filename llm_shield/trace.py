@@ -55,8 +55,10 @@ class ExecutionTracer:
         response: str | None = None,
         error: str | None = None,
         duration_ms: float | None = None,
+        token_usage: dict | None = None,
     ) -> None:
         """Record an LLM API call."""
+        usage = token_usage or {}
         record = LLMCallRecord(
             model=model,
             attempt=attempt,
@@ -65,10 +67,17 @@ class ExecutionTracer:
             error=error,
             duration_ms=duration_ms,
             timestamp=datetime.now(timezone.utc),
+            prompt_tokens=usage.get("prompt_tokens", 0),
+            completion_tokens=usage.get("completion_tokens", 0),
+            total_tokens=usage.get("total_tokens", 0),
         )
         self._trace.llm_calls.append(record)
         self._trace.total_llm_calls += 1
         self._trace.final_model = model
+        # Accumulate token totals
+        self._trace.total_prompt_tokens += record.prompt_tokens
+        self._trace.total_completion_tokens += record.completion_tokens
+        self._trace.total_tokens += record.total_tokens
 
     def record_recovery_attempt(
         self,

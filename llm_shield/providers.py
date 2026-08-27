@@ -27,8 +27,10 @@ class LLMProvider(ABC):
         timeout: float = 30.0,
         system_prompt: str | None = None,
         **kwargs: Any,
-    ) -> str:
-        """Call the LLM and return the response text.
+    ) -> tuple[str, dict]:
+        """Call the LLM and return (response_text, token_usage).
+
+        token_usage dict keys: prompt_tokens, completion_tokens, total_tokens
 
         Raises:
             LLMCallError: On provider errors, timeouts, etc.
@@ -49,7 +51,7 @@ class LiteLLMProvider(LLMProvider):
         timeout: float = 30.0,
         system_prompt: str | None = None,
         **kwargs: Any,
-    ) -> str:
+    ) -> tuple[str, dict]:
         import litellm
         from litellm import acompletion
 
@@ -70,12 +72,17 @@ class LiteLLMProvider(LLMProvider):
             )
             elapsed_ms = (time.monotonic() - start) * 1000
             content = response.choices[0].message.content
+            usage = getattr(response, "usage", None)
+            token_usage = {
+                "prompt_tokens": getattr(usage, "prompt_tokens", 0) or 0,
+                "completion_tokens": getattr(usage, "completion_tokens", 0) or 0,
+                "total_tokens": getattr(usage, "total_tokens", 0) or 0,
+            }
             logger.info(
                 "LLM call succeeded: model=%s, duration_ms=%.1f, tokens=%s",
-                model, elapsed_ms,
-                getattr(response, "usage", None),
+                model, elapsed_ms, token_usage,
             )
-            return content
+            return content, token_usage
 
         except asyncio.TimeoutError:
             elapsed_ms = (time.monotonic() - start) * 1000
@@ -130,7 +137,7 @@ class MockProvider(LLMProvider):
         timeout: float = 30.0,
         system_prompt: str | None = None,
         **kwargs: Any,
-    ) -> str:
+    ) -> tuple[str, dict]:
         from llm_shield.exceptions import LLMCallError
 
         self.call_history.append({
@@ -169,4 +176,4 @@ class MockProvider(LLMProvider):
                 details={"original_error": str(response)},
             )
 
-        return response
+        return response, {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
